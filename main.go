@@ -7,9 +7,12 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"github.com/mitchellh/go-ps"
@@ -17,21 +20,38 @@ import (
 )
 
 var (
-	startTimeApp, stopTimeApp, remoteAddr, localAddr, game string
-	startTime, stopTime                                    time.Time
+	startTimeApp, stopTimeApp, remoteAddr, localAddr, game, pause string
+	kernel32                                                      = syscall.NewLazyDLL("kernel32.dll")
+	procSetConsoleTitleW                                          = kernel32.NewProc("SetConsoleTitleW")
+	startTime, stopTime                                           time.Time
 )
 
 const (
 	appName    = "ese.exe"             // Имя запускаемого файла
 	timeFormat = "02.01.2006 15:04:05" // Формат времени для записи в CSV файл
-	gamelist   = "games.txt"           // Файл со списком игр
-	BotToken   = "YOU_BOT_TOKEN"       // ENTER YOU BOT TOKEN
-	CHAT_ID    = 111111111             // ENTER YOU CHAT ID
-	remoutPort = "7990"
-	localPort  = "7989"
+	remoutPort = "7990"                // порт для поиска IP подключившегося
+	localPort  = "7989"                // порт для поиска IP станции
 )
 
 func main() {
+	newTitle := "Drova Notifier" // Вводим новое имя окна программы
+	setConsoleTitle(newTitle)    // Устанавливаем новое имя окна
+
+	// Получаем текущую директорию программы
+	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Указываем относительный путь к файлу
+	gamelist := filepath.Join(dir, "games.txt")  // Файл со списком игр
+	botlist := filepath.Join(dir, "telebot.txt") // Файл с BotToken и CHAT_ID
+
+	// Получаем CHAT_ID и BotToken из файла telebot.txt
+	CHAT_IDstr, _ := setFromFile("id", botlist)
+	CHAT_ID, _ := strconv.ParseInt(CHAT_IDstr, 10, 64)
+	BotToken, _ := setFromFile("token", botlist)
+
 	isRunning := checkIfProcessRunning(appName)
 	go listenPort(remoutPort)
 	go listenPort(localPort)
@@ -148,6 +168,9 @@ func main() {
 		fmt.Println()
 	}
 
+	// pause = "ошибкой"
+	fmt.Scan(&pause)
+	fmt.Println("Программа завершилась с ошибкой", pause)
 }
 
 // Проверяет, запущен ли указанный процесс
@@ -278,4 +301,9 @@ func SendMessage(botToken string, chatID int64, text string) error {
 	message.DisableWebPagePreview = true
 
 	return nil
+}
+
+func setConsoleTitle(title string) { // для смены заголовока программы
+	ptrTitle, _ := syscall.UTF16PtrFromString(title)
+	_, _, _ = procSetConsoleTitleW.Call(uintptr(unsafe.Pointer(ptrTitle)))
 }

@@ -1,4 +1,4 @@
-module DROVA_BOT
+module Drova_Notifier
 
 go 1.21.2
 
