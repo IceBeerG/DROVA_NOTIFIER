@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -20,28 +21,42 @@ import (
 )
 
 var (
-	startTimeApp, stopTimeApp, remoteAddr, localAddr, game, pause string
-	kernel32                                                      = syscall.NewLazyDLL("kernel32.dll")
-	procSetConsoleTitleW                                          = kernel32.NewProc("SetConsoleTitleW")
-	startTime, stopTime                                           time.Time
+	startTimeApp, stopTimeApp, remoteAddr, localAddr, game string
+	kernel32                                               = syscall.NewLazyDLL("kernel32.dll")
+	procSetConsoleTitleW                                   = kernel32.NewProc("SetConsoleTitleW")
+	startTime, stopTime                                    time.Time
 )
 
 const (
 	appName    = "ese.exe"             // Имя запускаемого файла
+	newTitle   = "Drova Notifier"      // Имя окна программы
 	timeFormat = "02.01.2006 15:04:05" // Формат времени для записи в CSV файл
 	remoutPort = "7990"                // порт для поиска IP подключившегося
 	localPort  = "7989"                // порт для поиска IP станции
 )
 
 func main() {
-	newTitle := "Drova Notifier" // Вводим новое имя окна программы
-	setConsoleTitle(newTitle)    // Устанавливаем новое имя окна
+
+	logFilePath := "errors.log" // Имя файла для логирования ошибок
+	logFilePath = filepath.Join(filepath.Dir(os.Args[0]), logFilePath)
+
+	// Открываем файл для записи логов
+	logFile, err := os.OpenFile(logFilePath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		log.Fatal("Ошибка открытия файла", err, getLine())
+	}
+	defer logFile.Close()
+
+	// Устанавливаем файл в качестве вывода для логгера
+	log.SetOutput(logFile)
 
 	// Получаем текущую директорию программы
 	dir, err := filepath.Abs(filepath.Dir(os.Args[0]))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Ошибка получения текущей деректории: ", err, getLine())
 	}
+
+	setConsoleTitle(newTitle) // Устанавливаем новое имя окна
 
 	// Указываем относительный путь к файлу
 	gamelist := filepath.Join(dir, "games.txt")  // Файл со списком игр
@@ -59,7 +74,8 @@ func main() {
 	// Получаем имя ПК
 	hostname, err := os.Hostname()
 	if err != nil {
-		fmt.Println("Ошибка при получении имени компьютера:", err)
+		log.Println("Ошибка при получении имени компьютера: ", err, getLine())
+		fmt.Println("Ошибка при получении имени компьютера: ", err)
 		return
 	}
 	fmt.Printf("Hostname - %s\n\n", hostname)
@@ -83,7 +99,8 @@ func main() {
 			time.Sleep(10 * time.Second)
 			processes, err := ps.Processes()
 			if err != nil {
-				fmt.Println("Ошибка при получении списка процессов:", err)
+				log.Println("Ошибка при получении списка процессов: ", err, getLine())
+				fmt.Println("Ошибка при получении списка процессов: ", err)
 				return
 			}
 
@@ -91,6 +108,7 @@ func main() {
 				val := strings.Replace(process.Executable(), ".exe", "", -1)
 				gameN, err := setFromFile(val, gamelist)
 				if err != nil {
+					log.Println("Ошибка получения данных из файла ", gamelist, "- ", err, getLine())
 					fmt.Println(err)
 				}
 				if gameN != "" {
@@ -115,7 +133,7 @@ func main() {
 		// Отправляем сообщение через бота о начале сессии
 		err := SendMessage(BotToken, CHAT_ID, chatMessage)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("Ошибка отправки сообщения: ", err, getLine())
 		}
 
 		// time.Sleep(100 * time.Second)
@@ -162,15 +180,11 @@ func main() {
 		// Отправляем сообщение через бота об окончании сессии
 		err = SendMessage(BotToken, CHAT_ID, chatMessage)
 		if err != nil {
-			log.Fatal(err)
+			log.Fatal("Ошибка отправки сообщения: ", err, getLine())
 		}
 		fmt.Println()
 		fmt.Println()
 	}
-
-	// pause = "ошибкой"
-	fmt.Scan(&pause)
-	fmt.Println("Программа завершилась с ошибкой", pause)
 }
 
 // Проверяет, запущен ли указанный процесс
@@ -178,7 +192,7 @@ func checkIfProcessRunning(processName string) bool {
 	cmd := exec.Command("tasklist")
 	output, err := cmd.Output()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Ошибка получения списка процессов:", err, getLine())
 	}
 
 	return strings.Contains(string(output), processName)
@@ -205,7 +219,8 @@ func TopLoad() string {
 func listenPort(port string) {
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		fmt.Println("Ошибка при прослушивании порта:", err.Error())
+		log.Println("Ошибка при прослушивании порта: ", err, getLine())
+		fmt.Println("Ошибка при прослушивании порта: ", err)
 		return
 	}
 	defer listener.Close()
@@ -215,7 +230,8 @@ func listenPort(port string) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Ошибка при принятии соединения:", err.Error())
+			log.Println("Ошибка при принятии соединения: ", err, getLine())
+			fmt.Println("Ошибка при принятии соединения: ", err)
 			return
 		}
 
@@ -229,7 +245,8 @@ func findIP(conn net.Conn) {
 	remoteIP := conn.RemoteAddr().String()
 	ip, _, err := net.SplitHostPort(remoteIP)
 	if err != nil {
-		fmt.Println("Ошибка при разделении адреса и порта:", err.Error())
+		log.Println("Ошибка при разделении адреса и порта: ", err, getLine())
+		fmt.Println("Ошибка при разделении адреса и порта: ", err)
 		return
 	}
 
@@ -238,7 +255,8 @@ func findIP(conn net.Conn) {
 	localIP := conn.LocalAddr().String()
 	locip, _, err := net.SplitHostPort(localIP)
 	if err != nil {
-		fmt.Println("Ошибка при разделении адреса и порта:", err.Error())
+		log.Println("Ошибка при разделении адреса и порта: ", err, getLine())
+		fmt.Println("Ошибка при разделении адреса и порта: ", err)
 		return
 	}
 
@@ -247,11 +265,12 @@ func findIP(conn net.Conn) {
 	conn.Close()
 }
 
-func setFromFile(proc, filename string) (string, error) {
+func setFromFile(keys, filename string) (string, error) {
 	var gname string
 	file, err := os.Open(filename)
 	if err != nil {
-		fmt.Println("Ошибка при открытии файла:", err)
+		log.Println("Ошибка при открытии файла ", filename, ": ", err, getLine())
+		fmt.Println("Ошибка при открытии файла ", filename, ": ", err)
 		return "Ошибка при открытии файла: ", err
 	}
 	defer file.Close()
@@ -274,10 +293,8 @@ func setFromFile(proc, filename string) (string, error) {
 	}
 
 	// Проверить наличие SS1
-	if value, ok := data[proc]; ok {
-		// fmt.Println("Значение "+st+":", value)
+	if value, ok := data[keys]; ok {
 		gname = value
-
 	}
 	return gname, err
 }
@@ -285,6 +302,7 @@ func setFromFile(proc, filename string) (string, error) {
 func SendMessage(botToken string, chatID int64, text string) error {
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
+		log.Println("Ошибка подключения бота: ", err, getLine())
 		return err
 	}
 
@@ -292,6 +310,7 @@ func SendMessage(botToken string, chatID int64, text string) error {
 
 	_, err = bot.Send(message)
 	if err != nil {
+		log.Println("Ошибка отправки сообщения: ", err, getLine())
 		return err
 	}
 
@@ -306,4 +325,9 @@ func SendMessage(botToken string, chatID int64, text string) error {
 func setConsoleTitle(title string) { // для смены заголовока программы
 	ptrTitle, _ := syscall.UTF16PtrFromString(title)
 	_, _, _ = procSetConsoleTitleW.Call(uintptr(unsafe.Pointer(ptrTitle)))
+}
+
+func getLine() int {
+	_, _, line, _ := runtime.Caller(1)
+	return line
 }
