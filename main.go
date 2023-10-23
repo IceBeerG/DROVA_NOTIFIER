@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +27,7 @@ var (
 	kernel32                                               = syscall.NewLazyDLL("kernel32.dll")
 	procSetConsoleTitleW                                   = kernel32.NewProc("SetConsoleTitleW")
 	startTime, stopTime                                    time.Time
+	isRunning                                              bool
 )
 
 const (
@@ -32,8 +35,15 @@ const (
 	newTitle   = "Drova Notifier"      // Имя окна программы
 	timeFormat = "02.01.2006 15:04:05" // Формат времени для записи в CSV файл
 	remoutPort = "7990"                // порт для поиска IP подключившегося
-	localPort  = "7989"                // порт для поиска IP станции
+	localPort  = "139"                 // порт для поиска IP станции
 )
+
+type IPInfoResponse struct {
+	IP     string `json:"ip"`
+	City   string `json:"city"`
+	Region string `json:"region"`
+	ISP    string `json:"org"`
+}
 
 func main() {
 
@@ -62,12 +72,11 @@ func main() {
 	gamelist := filepath.Join(dir, "games.txt")  // Файл со списком игр
 	botlist := filepath.Join(dir, "telebot.txt") // Файл с BotToken и CHAT_ID
 
-	// Получаем CHAT_ID и BotToken из файла telebot.txt
+	// Получаем CHAT_ID, BotToken из файла telebot.txt
 	CHAT_IDstr, _ := setFromFile("id", botlist)
 	CHAT_ID, _ := strconv.ParseInt(CHAT_IDstr, 10, 64)
 	BotToken, _ := setFromFile("token", botlist)
 
-	isRunning := checkIfProcessRunning(appName)
 	go listenPort(remoutPort)
 	go listenPort(localPort)
 
@@ -75,7 +84,6 @@ func main() {
 	hostname, err := os.Hostname()
 	if err != nil {
 		log.Println("Ошибка при получении имени компьютера: ", err, getLine())
-		fmt.Println("Ошибка при получении имени компьютера: ", err)
 		return
 	}
 	fmt.Printf("Hostname - %s\n\n", hostname)
@@ -83,19 +91,18 @@ func main() {
 	for {
 		//ждем запуска приложения ese.exe
 		for i := 0; i != 2; {
-			// Ожидаем 5 секунд перед проверкой
-			time.Sleep(5 * time.Second)
+			isRunning = checkIfProcessRunning(appName) // запущено ли приложение
 			if isRunning {
 				startTime = time.Now() // переменная для вычисления продолжительности сессии
 				startTimeApp = time.Now().Format(timeFormat)
 				fmt.Println("Время запуска - ", startTimeApp)
 				i = 2 //т.к. приложение запущено, выходим из цикла
 			}
-			// Проверяем, запущено ли приложение в следующей итерации
-			isRunning = checkIfProcessRunning(appName)
-
+			time.Sleep(5 * time.Second)
 		}
-		for i := 0; i < 12; {
+
+		// получаем список процессов
+		for i := 0; i < 15; {
 			time.Sleep(10 * time.Second)
 			processes, err := ps.Processes()
 			if err != nil {
@@ -103,30 +110,36 @@ func main() {
 				fmt.Println("Ошибка при получении списка процессов: ", err)
 				return
 			}
-
+			// сверяем запущенные процессы со списком игры в файле games.txt
 			for _, process := range processes {
-				val := strings.Replace(process.Executable(), ".exe", "", -1)
-				gameN, err := setFromFile(val, gamelist)
+				proc := strings.Replace(process.Executable(), ".exe", "", -1) // убираем .exe из имен процесса
+
+				// ищем значение proc среди ключенй в файле, и если находим, передаем значение в переменную
+				gameN, err := setFromFile(proc, gamelist)
 				if err != nil {
 					log.Println("Ошибка получения данных из файла ", gamelist, "- ", err, getLine())
 					fmt.Println(err)
 				}
+				// если нашли совпадение записываем название игры и выходим из цикла
 				if gameN != "" {
-					i = 11
 					game = gameN
+					i = 15
 				}
 			}
 			i++
 		}
+		// если не нашли игру в списке, ищем процесс, максимально нагружающий процессор
 		if game == "" {
 			game = TopLoad()
 		}
 		gamerIP := remoteAddr
 		serverIP := localAddr
 
-		// Создаем сообщение
-		chatMessage := "Имя ПК = " + hostname + "\nНачало сессии - " + startTimeApp + "\nИгра - " + game + "\nserverIP = " + serverIP + "\nGamerIP - " + gamerIP
+		city, region, isp := ipInfo(remoteAddr)
 
+		// Создаем сообщение
+		chatMessage := hostname + " - " + gamerIP + "\nHaчaлo сессии - " + startTimeApp + "\nИгpa - " + game
+		chatMessage += "\nserverIP = " + serverIP + "\nГopoд: " + city + "\nOблacть: " + region + "\nПpoвaйдep: " + isp
 		fmt.Println(chatMessage)
 		fmt.Println()
 
@@ -136,8 +149,7 @@ func main() {
 			log.Fatal("Ошибка отправки сообщения: ", err, getLine())
 		}
 
-		// time.Sleep(100 * time.Second)
-
+		// ждем закрытия процесса ese.exe
 		for i := 0; i != 3; {
 			isRunning = checkIfProcessRunning(appName)
 			if !isRunning {
@@ -148,7 +160,6 @@ func main() {
 			time.Sleep(5 * time.Second)
 		}
 
-		// startTimeApp = startTime.Format(timeFormat)
 		stopTimeApp = stopTime.Format(timeFormat)
 		duration := stopTime.Sub(startTime).Round(time.Second)
 		hours := int(duration.Hours())
@@ -174,10 +185,10 @@ func main() {
 			sessionDur = sessionDur + sec
 		}
 		fmt.Println("sessionDur - ", sessionDur)
-		// sessionDur := hou + ":" + min + ":" + sec
-		fmt.Printf("Сессия завершена:\n%s;\n%s;\n%s;\n%s;\n%s;\n%s\n", startTimeApp, stopTimeApp, sessionDur, hostname, serverIP, gamerIP)
-		chatMessage = "\nСессия на " + hostname + " завершена\nВремя сессии - " + sessionDur + "\nИгра - " + game + "\nGamerIP - " + gamerIP
-		// Отправляем сообщение через бота об окончании сессии
+		chatMessage = hostname + " - " + gamerIP + "\nCeccия завершена\nBpeмя ceccии - " + sessionDur + "\nИгpa - " + game
+		fmt.Println(chatMessage, "\nKoнeц ceccии: ", stopTimeApp)
+
+		// Отправляем сообщение об окончании сессии
 		err = SendMessage(BotToken, CHAT_ID, chatMessage)
 		if err != nil {
 			log.Fatal("Ошибка отправки сообщения: ", err, getLine())
@@ -198,6 +209,7 @@ func checkIfProcessRunning(processName string) bool {
 	return strings.Contains(string(output), processName)
 }
 
+// ищет процесс максимально нагруущающий процессор
 func TopLoad() string {
 	processes, _ := process.Processes()
 
@@ -216,6 +228,7 @@ func TopLoad() string {
 	return maxCPUProcess
 }
 
+// слушаем порты
 func listenPort(port string) {
 	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
@@ -224,8 +237,6 @@ func listenPort(port string) {
 		return
 	}
 	defer listener.Close()
-
-	// fmt.Println("Слушаем порт", port)
 
 	for {
 		conn, err := listener.Accept()
@@ -237,10 +248,10 @@ func listenPort(port string) {
 
 		// Обработка соединения в отдельной горутине
 		go findIP(conn)
-		time.Sleep(5 * time.Second)
 	}
 }
 
+// поиск IP сервера и игрока
 func findIP(conn net.Conn) {
 	remoteIP := conn.RemoteAddr().String()
 	ip, _, err := net.SplitHostPort(remoteIP)
@@ -265,6 +276,7 @@ func findIP(conn net.Conn) {
 	conn.Close()
 }
 
+// получаем данные из файла в виде ключ = значение
 func setFromFile(keys, filename string) (string, error) {
 	var gname string
 	file, err := os.Open(filename)
@@ -292,7 +304,6 @@ func setFromFile(keys, filename string) (string, error) {
 		}
 	}
 
-	// Проверить наличие SS1
 	if value, ok := data[keys]; ok {
 		gname = value
 	}
@@ -314,20 +325,39 @@ func SendMessage(botToken string, chatID int64, text string) error {
 		return err
 	}
 
-	// Опциональные настройки сообщения
-	message.ParseMode = "Markdown" // Может быть "Markdown" или "HTML"
-	message.DisableNotification = false
-	message.DisableWebPagePreview = true
-
 	return nil
 }
 
-func setConsoleTitle(title string) { // для смены заголовока программы
+// для смены заголовока программы
+func setConsoleTitle(title string) {
 	ptrTitle, _ := syscall.UTF16PtrFromString(title)
 	_, _, _ = procSetConsoleTitleW.Call(uintptr(unsafe.Pointer(ptrTitle)))
 }
 
+// получение строки кода где возникла ошибка
 func getLine() int {
 	_, _, line, _ := runtime.Caller(1)
 	return line
+}
+
+// инфо по IP
+func ipInfo(ip string) (city, region, isp string) {
+	apiURL := fmt.Sprintf("https://ipinfo.io/%s/json", ip)
+
+	resp, err := http.Get(apiURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var ipInfo IPInfoResponse
+	err = json.NewDecoder(resp.Body).Decode(&ipInfo)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	city = ipInfo.City
+	region = ipInfo.Region
+	isp = ipInfo.ISP
+	return
 }
