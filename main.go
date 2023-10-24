@@ -102,7 +102,7 @@ func main() {
 		}
 
 		// получаем список процессов
-		for i := 0; i < 15; {
+		for i := 0; i < 24; {
 			time.Sleep(10 * time.Second)
 			processes, err := ps.Processes()
 			if err != nil {
@@ -123,7 +123,7 @@ func main() {
 				// если нашли совпадение записываем название игры и выходим из цикла
 				if gameN != "" {
 					game = gameN
-					i = 15
+					i = 24
 				}
 			}
 			i++
