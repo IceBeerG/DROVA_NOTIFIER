@@ -9,7 +9,7 @@
 2. Установить VS Code https://code.visualstudio.com/ и Golang https://go.dev/
 3. Открываем VS Code и перетаскиваем в него папку с распакованными файлами
 4. Открываем терминал сочетанием клавиш Ctrl + ` и выполняем команду go build -o Drova_Notifier.exe main.go. Получаем исполняемый файл Drova_Notifier.exe
-5. Создайте нового бота в Telegram, следуя инструкциям BotFather.
+5. Создайте нового бота в Telegram с помощью BotFather https://telegram.me/BotFather
 6. Заменяем в telebot.txt данные на свои, ID бота и ID чата куда будут приходить сообщения
 7. Если требуется, для удобства переименовываем ПК, так как имя ПК передается в качестве имени станции
 
